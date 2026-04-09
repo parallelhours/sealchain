@@ -4,9 +4,13 @@
 package sealchain_test
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -79,4 +83,67 @@ func TestAppendWithNilDomain(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Nil(t, entries[0].Domain)
+}
+
+func TestEmptyLogVerifies(t *testing.T) {
+	dir := t.TempDir()
+	log := sealchain.NewLog(filepath.Join(dir, "audit.log"))
+	assert.NoError(t, log.Verify())
+}
+
+func TestVerifyDetectsTampering(t *testing.T) {
+	dir := t.TempDir()
+	id := newTestIdentity(t)
+	logPath := filepath.Join(dir, "audit.log")
+	log := sealchain.NewLog(logPath)
+
+	require.NoError(t, log.Append(sealchain.Entry{
+		Event:  sealchain.EventVaultCreated,
+		Domain: sealchain.DomainEntry{"vault": "v"},
+	}, id.did, id))
+	require.NoError(t, log.Append(sealchain.Entry{
+		Event:  sealchain.EventDocumentAccessed,
+		Domain: sealchain.DomainEntry{"vault": "v", "document": "d"},
+	}, id.did, id))
+
+	raw, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	newline := bytes.IndexByte(raw, '\n')
+	require.Greater(t, newline, 0)
+	tampered := append(
+		[]byte(`{"foundation":{"seq":1,"prev_hash":"tampered","actor_did":"`+id.did+`","timestamp":"2026-01-01T00:00:00Z","signature":""},"event":"VAULT_CREATED","domain":{"vault":"v"}}`+"\n"),
+		raw[newline+1:]...,
+	)
+	require.NoError(t, os.WriteFile(logPath, tampered, 0600))
+
+	assert.Error(t, log.Verify(), "tampered log should fail verification")
+}
+
+func TestVerifyRejectsForgedSignature(t *testing.T) {
+	dir := t.TempDir()
+	id := newTestIdentity(t)
+	other := newTestIdentity(t)
+	logPath := filepath.Join(dir, "audit.log")
+	log := sealchain.NewLog(logPath)
+
+	require.NoError(t, log.Append(sealchain.Entry{
+		Event:  sealchain.EventVaultCreated,
+		Domain: sealchain.DomainEntry{"vault": "v"},
+	}, id.did, id))
+
+	raw, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	var e sealchain.Entry
+	require.NoError(t, json.Unmarshal(bytes.TrimRight(raw, "\n"), &e))
+	e.Foundation.Signature = ""
+	body, err := json.Marshal(e)
+	require.NoError(t, err)
+	sig, err := other.Sign(body)
+	require.NoError(t, err)
+	e.Foundation.Signature = base64.StdEncoding.EncodeToString(sig)
+	forged, err := json.Marshal(e)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(logPath, append(forged, '\n'), 0600))
+
+	assert.Error(t, log.Verify(), "forged signature should be rejected")
 }
