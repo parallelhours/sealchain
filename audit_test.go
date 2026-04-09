@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/mr-tron/base58"
@@ -170,4 +171,29 @@ func TestVerifyDetectsDomainTampering(t *testing.T) {
 	require.NoError(t, os.WriteFile(logPath, append(forged, '\n'), 0600))
 
 	assert.Error(t, log.Verify(), "domain tampering should be detected")
+}
+
+func TestAppendConcurrentGoroutinesSafe(t *testing.T) {
+	dir := t.TempDir()
+	id := newTestIdentity(t)
+	log := sealchain.NewLog(filepath.Join(dir, "audit.log"))
+
+	const n = 20
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			require.NoError(t, log.Append(sealchain.Entry{
+				Event:  sealchain.EventDocumentAccessed,
+				Domain: sealchain.DomainEntry{"vault": "v", "document": "d"},
+			}, id.did, id))
+		}()
+	}
+	wg.Wait()
+
+	entries, err := log.Entries()
+	require.NoError(t, err)
+	assert.Len(t, entries, n)
+	assert.NoError(t, log.Verify())
 }
