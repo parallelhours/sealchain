@@ -7,18 +7,6 @@ import "encoding/json"
 
 type EventType string
 
-const (
-	EventVaultCreated      EventType = "VAULT_CREATED"
-	EventMemberAdded       EventType = "MEMBER_ADDED"
-	EventMemberRemoved     EventType = "MEMBER_REMOVED"
-	EventAdminChanged      EventType = "ADMIN_CHANGED"
-	EventDocumentStored    EventType = "DOCUMENT_STORED"
-	EventDocumentAccessed  EventType = "DOCUMENT_ACCESSED"
-	EventDocumentExtracted EventType = "DOCUMENT_EXTRACTED"
-	EventMobileViewed      EventType = "MOBILE_VIEWED"
-	EventManifestUpdated   EventType = "MANIFEST_UPDATED"
-)
-
 type Entry struct {
 	Foundation Foundation `json:"foundation"`
 	Domain     Domain     `json:"domain,omitempty"`
@@ -46,22 +34,9 @@ func normalizeDomain(fields map[string]any) map[string]any {
 	if len(fields) == 0 {
 		return nil
 	}
-	// Known field order for audit domain
-	order := []string{"vault", "document", "content_hash", "watermark_id", "actor_name"}
 	result := make(map[string]any, len(fields))
-	for _, key := range order {
-		if v, ok := fields[key]; ok {
-			result[key] = v
-		}
-	}
-	// Include any unknown fields
 	for k, v := range fields {
-		if _, exists := result[k]; !exists {
-			result[k] = v
-		}
-	}
-	if len(result) == 0 {
-		return nil
+		result[k] = v
 	}
 	return result
 }

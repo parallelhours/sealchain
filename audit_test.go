@@ -21,6 +21,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	evtVaultCreated      sealchain.EventType = "VAULT_CREATED"
+	evtDocumentStored    sealchain.EventType = "DOCUMENT_STORED"
+	evtDocumentAccessed  sealchain.EventType = "DOCUMENT_ACCESSED"
+	evtDocumentExtracted sealchain.EventType = "DOCUMENT_EXTRACTED"
+)
+
 type testIdentity struct {
 	did     string
 	privKey ed25519.PrivateKey
@@ -47,12 +54,12 @@ func TestAppendSetsFoundationFields(t *testing.T) {
 	log := sealchain.NewLog(filepath.Join(dir, "audit.log"))
 
 	require.NoError(t, log.Append(sealchain.Entry{
-		Event:  sealchain.EventVaultCreated,
+		Event:  evtVaultCreated,
 		Domain: sealchain.DomainEntry{"vault": "team-green"},
 	}, id.did, id))
 
 	require.NoError(t, log.Append(sealchain.Entry{
-		Event:  sealchain.EventDocumentAccessed,
+		Event:  evtDocumentAccessed,
 		Domain: sealchain.DomainEntry{"vault": "team-green", "document": "design-v7"},
 	}, id.did, id))
 
@@ -65,7 +72,7 @@ func TestAppendSetsFoundationFields(t *testing.T) {
 	assert.Equal(t, id.did, entries[0].Foundation.ActorDID)
 	assert.NotEmpty(t, entries[0].Foundation.Timestamp)
 	assert.NotEmpty(t, entries[0].Foundation.Signature)
-	assert.Equal(t, sealchain.EventVaultCreated, entries[0].Event)
+	assert.Equal(t, evtVaultCreated, entries[0].Event)
 
 	assert.Equal(t, uint64(2), entries[1].Foundation.Seq)
 	assert.Contains(t, entries[1].Foundation.PrevHash, "sha256:")
@@ -77,7 +84,7 @@ func TestAppendWithNilDomain(t *testing.T) {
 	log := sealchain.NewLog(filepath.Join(dir, "audit.log"))
 
 	require.NoError(t, log.Append(sealchain.Entry{
-		Event: sealchain.EventVaultCreated,
+		Event: evtVaultCreated,
 	}, id.did, id))
 
 	entries, err := log.Entries()
@@ -99,11 +106,11 @@ func TestVerifyDetectsTampering(t *testing.T) {
 	log := sealchain.NewLog(logPath)
 
 	require.NoError(t, log.Append(sealchain.Entry{
-		Event:  sealchain.EventVaultCreated,
+		Event:  evtVaultCreated,
 		Domain: sealchain.DomainEntry{"vault": "v"},
 	}, id.did, id))
 	require.NoError(t, log.Append(sealchain.Entry{
-		Event:  sealchain.EventDocumentAccessed,
+		Event:  evtDocumentAccessed,
 		Domain: sealchain.DomainEntry{"vault": "v", "document": "d"},
 	}, id.did, id))
 
@@ -128,7 +135,7 @@ func TestVerifyRejectsForgedSignature(t *testing.T) {
 	log := sealchain.NewLog(logPath)
 
 	require.NoError(t, log.Append(sealchain.Entry{
-		Event:  sealchain.EventVaultCreated,
+		Event:  evtVaultCreated,
 		Domain: sealchain.DomainEntry{"vault": "v"},
 	}, id.did, id))
 
@@ -156,7 +163,7 @@ func TestVerifyDetectsDomainTampering(t *testing.T) {
 	log := sealchain.NewLog(logPath)
 
 	require.NoError(t, log.Append(sealchain.Entry{
-		Event:  sealchain.EventDocumentExtracted,
+		Event:  evtDocumentExtracted,
 		Domain: sealchain.DomainEntry{"vault": "pharma-trial-007", "document": "protocol.pdf"},
 	}, id.did, id))
 
@@ -174,7 +181,7 @@ func TestVerifySignatureRoundTrip(t *testing.T) {
 	log := sealchain.NewLog(filepath.Join(dir, "audit.log"))
 
 	require.NoError(t, log.Append(sealchain.Entry{
-		Event:  sealchain.EventDocumentStored,
+		Event:  evtDocumentStored,
 		Domain: sealchain.DomainEntry{"vault": "test-vault", "document": "test-doc"},
 	}, id.did, id))
 
@@ -211,7 +218,7 @@ func TestAppendConcurrentGoroutinesSafe(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			require.NoError(t, log.Append(sealchain.Entry{
-				Event:  sealchain.EventDocumentAccessed,
+				Event:  evtDocumentAccessed,
 				Domain: sealchain.DomainEntry{"vault": "v", "document": "d"},
 			}, id.did, id))
 		}()
