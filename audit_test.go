@@ -147,3 +147,27 @@ func TestVerifyRejectsForgedSignature(t *testing.T) {
 
 	assert.Error(t, log.Verify(), "forged signature should be rejected")
 }
+
+func TestVerifyDetectsDomainTampering(t *testing.T) {
+	dir := t.TempDir()
+	id := newTestIdentity(t)
+	logPath := filepath.Join(dir, "audit.log")
+	log := sealchain.NewLog(logPath)
+
+	require.NoError(t, log.Append(sealchain.Entry{
+		Event:  sealchain.EventDocumentExtracted,
+		Domain: sealchain.DomainEntry{"vault": "pharma-trial-007", "document": "protocol.pdf"},
+	}, id.did, id))
+
+	raw, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	var e sealchain.Entry
+	require.NoError(t, json.Unmarshal(bytes.TrimRight(raw, "\n"), &e))
+
+	e.Domain = sealchain.DomainEntry{"vault": "pharma-trial-007", "document": "fake-doc.pdf"}
+	forged, err := json.Marshal(e)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(logPath, append(forged, '\n'), 0600))
+
+	assert.Error(t, log.Verify(), "domain tampering should be detected")
+}
