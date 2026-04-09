@@ -5,6 +5,7 @@ package sealchain
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -46,7 +47,7 @@ func (l *Log) Append(e Entry, did string, s Signer) error {
 	}
 
 	e.Foundation.Signature = ""
-	body, err := json.Marshal(e)
+	body, err := jsonMarshalForSign(e)
 	if err != nil {
 		return fmt.Errorf("marshal entry body: %w", err)
 	}
@@ -56,7 +57,7 @@ func (l *Log) Append(e Entry, did string, s Signer) error {
 	}
 	e.Foundation.Signature = base64.StdEncoding.EncodeToString(sig)
 
-	line, err := json.Marshal(e)
+	line, err := jsonMarshalForSign(e)
 	if err != nil {
 		return fmt.Errorf("marshal signed entry: %w", err)
 	}
@@ -132,7 +133,7 @@ func (l *Log) Verify() error {
 		}
 		signingEntry := e
 		signingEntry.Foundation.Signature = ""
-		signingBody, err := json.Marshal(signingEntry)
+		signingBody, err := jsonMarshalForSign(signingEntry)
 		if err != nil {
 			return fmt.Errorf("entry %d: marshal signing body: %w", i+1, err)
 		}
@@ -141,6 +142,25 @@ func (l *Log) Verify() error {
 		}
 	}
 	return nil
+}
+
+func jsonMarshalForSign(v any) ([]byte, error) {
+	return MarshalForSign(v)
+}
+
+func MarshalForSign(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "")
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	result := buf.Bytes()
+	if len(result) > 0 && result[len(result)-1] == '\n' {
+		result = result[:len(result)-1]
+	}
+	return result, nil
 }
 
 func (l *Log) readRawLines() ([][]byte, error) {

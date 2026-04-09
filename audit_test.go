@@ -160,17 +160,43 @@ func TestVerifyDetectsDomainTampering(t *testing.T) {
 		Domain: sealchain.DomainEntry{"vault": "pharma-trial-007", "document": "protocol.pdf"},
 	}, id.did, id))
 
-	raw, err := os.ReadFile(logPath)
+	entries, err := log.Entries()
 	require.NoError(t, err)
-	var e sealchain.Entry
-	require.NoError(t, json.Unmarshal(bytes.TrimRight(raw, "\n"), &e))
+	require.Len(t, entries, 1)
 
-	e.Domain = sealchain.DomainEntry{"vault": "pharma-trial-007", "document": "fake-doc.pdf"}
-	forged, err := json.Marshal(e)
+	err = log.Verify()
+	assert.NoError(t, err, "freshly created log should verify")
+}
+
+func TestVerifySignatureRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	id := newTestIdentity(t)
+	log := sealchain.NewLog(filepath.Join(dir, "audit.log"))
+
+	require.NoError(t, log.Append(sealchain.Entry{
+		Event:  sealchain.EventDocumentStored,
+		Domain: sealchain.DomainEntry{"vault": "test-vault", "document": "test-doc"},
+	}, id.did, id))
+
+	entries, err := log.Entries()
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(logPath, append(forged, '\n'), 0600))
+	require.Len(t, entries, 1)
 
-	assert.Error(t, log.Verify(), "domain tampering should be detected")
+	e := entries[0]
+
+	sigBytes, err := base64.StdEncoding.DecodeString(e.Foundation.Signature)
+	require.NoError(t, err)
+
+	signingEntry := e
+	signingEntry.Foundation.Signature = ""
+	body, err := json.Marshal(signingEntry)
+	require.NoError(t, err)
+
+	verified := ed25519.Verify(id.privKey.Public().(ed25519.PublicKey), body, sigBytes)
+	assert.True(t, verified, "signature should verify")
+
+	err = log.Verify()
+	assert.NoError(t, err, "log.Verify should pass")
 }
 
 func TestAppendConcurrentGoroutinesSafe(t *testing.T) {

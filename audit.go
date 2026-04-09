@@ -25,13 +25,57 @@ type Entry struct {
 	Event      EventType  `json:"event"`
 }
 
-func (e *Entry) UnmarshalJSON(data []byte) error {
+// MarshalJSON implements custom JSON marshaling to ensure stable field ordering
+// for the Domain field, which is critical for signature verification.
+func (e Entry) MarshalJSON() ([]byte, error) {
 	type Alias Entry
 	aux := struct {
-		Domain map[string]any `json:"domain,omitempty"`
-		*Alias
+		Alias
+		Domain any `json:"domain,omitempty"`
 	}{
-		Alias: (*Alias)(nil),
+		Alias:  Alias(e),
+		Domain: nil,
+	}
+	if e.Domain != nil {
+		aux.Domain = normalizeDomain(e.Domain.Fields())
+	}
+	return json.Marshal(aux)
+}
+
+func normalizeDomain(fields map[string]any) map[string]any {
+	if len(fields) == 0 {
+		return nil
+	}
+	// Known field order for audit domain
+	order := []string{"vault", "document", "content_hash", "watermark_id", "actor_name"}
+	result := make(map[string]any, len(fields))
+	for _, key := range order {
+		if v, ok := fields[key]; ok {
+			result[key] = v
+		}
+	}
+	// Include any unknown fields
+	for k, v := range fields {
+		if _, exists := result[k]; !exists {
+			result[k] = v
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func (e *Entry) UnmarshalJSON(data []byte) error {
+	type Alias struct {
+		Foundation Foundation `json:"foundation"`
+		Event      EventType  `json:"event"`
+	}
+	aux := struct {
+		Domain map[string]any `json:"domain,omitempty"`
+		Alias
+	}{
+		Alias: Alias{},
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
