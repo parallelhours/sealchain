@@ -26,7 +26,7 @@ A commercial license grants you:
 
 To inquire about a commercial license, contact:
 
-**Email:** [licensing@parallelhours.com](mailto:licensing@parallelhours.com)
+**Email:** [support@parallelhours.io](mailto:support@parallelhours.io)
 
 Please include a brief description of your use case and the scale of your deployment. We aim to respond within two business days.
 

@@ -99,6 +99,6 @@ Exit codes: `0` = valid, `1` = tampered or corrupt, `2` = usage error.
 sealchain is dual-licensed:
 
 - **AGPL v3** — free for open source use. If you distribute or run a service that includes sealchain, your project must also be licensed under AGPL v3. See [LICENSE](LICENSE).
-- **Commercial license** — for closed-source products or SaaS deployments without copyleft obligations. Contact [licensing@parallelhours.com](mailto:licensing@parallelhours.com).
+- **Commercial license** — for closed-source products or SaaS deployments without copyleft obligations. Contact [support@parallelhours.io](mailto:support@parallelhours.io).
 
 See [docs/licensing.md](docs/licensing.md) for details.
