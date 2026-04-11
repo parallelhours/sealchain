@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Parallel Hours LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: AGPL-3.0-only
 
 package sealchain
 
