@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	"github.com/mr-tron/base58"
-	sealchain "github.com/pmonday/sealchain"
+	sealchain "github.com/parallelhours/sealchain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

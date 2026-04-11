@@ -1,4 +1,4 @@
-module github.com/pmonday/sealchain
+module github.com/parallelhours/sealchain
 
 go 1.26.1
 
