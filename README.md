@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/sealchain-logo.svg" width="200" alt="sealchain — three seals linked by a chain">
+</p>
+
 # sealchain
 
 sealchain is a Go library for append-only, tamper-evident audit logs backed by SHA-256 hash chains and Ed25519 signatures.
