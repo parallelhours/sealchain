@@ -1,8 +1,7 @@
 .worktrees/
 
-# Binaries (root-level only, not the cmd/ source directories)
-/vault
-/vaultd
+# Binaries
+sealcheck
 *.exe
 
 # Go
@@ -19,17 +18,8 @@ vendor/
 .DS_Store
 Thumbs.db
 
-# Vault runtime (never commit key material or local vault state)
-~/.vault/
-
-# Swift / SPM
-sdk/ios/.build/
-
-# Claude stuff
+# Claude
 .mcp.json
 .claude/settings.local.json
 .claude/.venv/
-docs/superpowers/specs/**
-
-# OpenCode stuff
-opencode.jsonc
+docs/superpowers/
