@@ -9,4 +9,8 @@ type Foundation struct {
 	ActorDID  string `json:"actor_did"`
 	Timestamp string `json:"timestamp"`
 	Signature string `json:"signature"`
+
+	// Rotation fields (only populated for genesis/terminus entries)
+	LogRole string `json:"log_role,omitempty"` // "genesis" or "terminus"
+	LogRef  string `json:"log_ref,omitempty"`   // for genesis: previous log path; for terminus: next log path
 }

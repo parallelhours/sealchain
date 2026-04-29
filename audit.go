@@ -7,6 +7,21 @@ import "encoding/json"
 
 type EventType string
 
+// Library-internal event types for the rotation feature.
+// These are not domain-specific; callers define their own EventType constants.
+const (
+	EventLogTerminus EventType = "log.terminus"
+	EventLogGenesis  EventType = "log.genesis"
+)
+
+type RotationReason string
+
+const (
+	RotationSize   RotationReason = "size_threshold"
+	RotationTime   RotationReason = "time_threshold"
+	RotationManual RotationReason = "manual"
+)
+
 type Entry struct {
 	Foundation Foundation `json:"foundation"`
 	Domain     Domain     `json:"domain,omitempty"`

@@ -11,6 +11,7 @@ sealchain is a Go library for append-only, tamper-evident audit logs backed by S
 - **Dual-mechanism integrity** — a SHA-256 hash chain proves ordering and continuity within a log; Ed25519 signatures prove actor authenticity. Each mechanism catches what the other cannot.
 - **Domain extensibility** — define your own event types and payload fields. sealchain has no opinion about what you log.
 - **JSONL on disk** — one JSON object per line. Human-readable, greppable, no database required.
+- **Log rotation** — split logs across files with unbroken cryptographic chain. CFR Part 11 compliant.
 
 ## Quick Start
 
@@ -63,7 +64,7 @@ func main() {
         log.Fatal(err)
     }
 
-    l := sealchain.NewLog("/var/log/myapp/audit.log")
+    l := sealchain.NewLog("/var/log/myapp/audit-log.000.jsonl")
 
     err = l.Append(sealchain.Entry{
         Event:  EventDocumentStored,
@@ -80,14 +81,43 @@ func main() {
 }
 ```
 
+## Log Rotation
+
+Rotate logs while preserving cryptographic chain integrity:
+
+```go
+// Rotate to next generation (e.g., audit-log.000.jsonl -> audit-log.001.jsonl)
+newLog, err := log.Rotate(sealchain.RotationManual, actorDID, signer)
+if err != nil {
+    log.Fatal(err)
+}
+// newLog is the next generation log (audit-log.001.jsonl)
+```
+
+Logs use numbered naming (`audit-log.000.jsonl`, `audit-log.001.jsonl`). Each rotation writes a **terminus** entry (end of old log) and **genesis** entry (start of new log), cross-linked by fingerprints.
+
+Verify the entire chain across rotated logs:
+
+```go
+if err := sealchain.VerifyChain("/var/log/myapp", "audit-log"); err != nil {
+    log.Fatal("chain verification failed:", err)
+}
+```
+
 ## sealcheck CLI
 
 Verify an audit log file from the command line — no code required:
 
 ```bash
 go install github.com/parallelhours/sealchain/cmd/sealcheck@latest
-sealcheck verify /var/log/myapp/audit.log
+
+# Verify single log
+sealcheck verify /var/log/myapp/audit-log.000.jsonl
 # OK: 42 entries verified
+
+# Verify cross-log chain (with rotation)
+sealcheck verify-chain /var/log/myapp audit-log
+# verify-chain: chain valid
 ```
 
 Exit codes: `0` = valid, `1` = tampered or corrupt, `2` = usage error.
@@ -96,6 +126,7 @@ Exit codes: `0` = valid, `1` = tampered or corrupt, `2` = usage error.
 
 - [Core Concepts](docs/concepts.md) — hash chains, genesis sentinel, signature scope, and security guarantees
 - [Integration Guide](docs/integration.md) — embedding sealchain in your Go project
+- [Log Rotation](docs/rotation.md) — rotation design, CFR Part 11 compliance, API reference
 - [Licensing](docs/licensing.md) — AGPL v3 and commercial license options
 
 ## License

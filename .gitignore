@@ -1,7 +1,7 @@
 .worktrees/
 
 # Binaries
-sealcheck
+/sealcheck
 *.exe
 
 # Go
@@ -23,3 +23,10 @@ Thumbs.db
 .claude/settings.local.json
 .claude/.venv/
 docs/superpowers/
+
+# OpenCode
+opencode.json
+opencode.json.
+
+# Generic files
+.env
