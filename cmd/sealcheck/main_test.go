@@ -113,3 +113,40 @@ func TestRunTamperedLog(t *testing.T) {
 		t.Fatalf("expected exit 1 (tampered), got %d", code)
 	}
 }
+
+func TestRunVerifyChain(t *testing.T) {
+	dir := t.TempDir()
+	// Use audit-log.000.jsonl to match the baseName.NNN.jsonl pattern expected by VerifyChain
+	logPath := filepath.Join(dir, "audit-log.000.jsonl")
+	l := sealchain.NewLog(logPath)
+	id := makeID(t)
+
+	err := l.Append(sealchain.Entry{
+		Event:  sealchain.EventType("test"),
+		Domain: sealchain.DomainEntry{"key": "val"},
+	}, id.did, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newLog, err := l.Rotate(sealchain.RotationManual, id.did, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newLog == nil {
+		t.Fatal("expected new log after rotation")
+	}
+
+	err = newLog.Append(sealchain.Entry{
+		Event:  sealchain.EventType("test2"),
+		Domain: sealchain.DomainEntry{"key2": "val2"},
+	}, id.did, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code := run([]string{"verify-chain", dir, "audit-log"})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+}
