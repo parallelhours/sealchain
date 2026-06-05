@@ -20,13 +20,29 @@ import (
 	"time"
 )
 
+// Log is a file-backed append-only audit log. It is safe for concurrent use:
+// Append holds an exclusive write lock and Entries/Verify hold a shared read lock.
+//
+// A Log is a lightweight handle — multiple instances pointing to the same path
+// are safe as long as all access goes through this type's methods. Direct
+// modification of the underlying file bypasses locking and will corrupt the chain.
 type Log struct {
 	path string
 	mu   sync.RWMutex
 }
 
-// DefaultRotatePath returns the next rotated log path for the given current path.
-// Rotated logs use zero-padded sequence numbers: audit-log.001.jsonl, audit-log.002.jsonl, etc.
+// DefaultRotatePath returns the next log file path in the rotation sequence.
+// Given "logs/audit-log.002.jsonl" it scans the directory for files matching
+// "audit-log.*.jsonl" and returns the path with the next available three-digit
+// sequence number, e.g. "logs/audit-log.003.jsonl".
+//
+// If currentPath contains no sequence number the sequence starts at .001.
+// Sequence numbers are zero-padded to three digits; beyond 999 the padding
+// grows naturally to preserve lexicographic sort order.
+//
+// This is the function used internally by Rotate. It is exported so callers
+// can preview the next path (e.g. to pre-allocate storage) without triggering
+// a rotation.
 func DefaultRotatePath(currentPath string) (string, error) {
 	dir := filepath.Dir(currentPath)
 	base := filepath.Base(currentPath)
@@ -79,10 +95,30 @@ func defaultRotatePath(currentPath string) (string, error) {
 	return DefaultRotatePath(currentPath)
 }
 
+// NewLog returns a Log handle for path. The file is created on the first
+// Append if it does not yet exist. Calling NewLog on an existing log file is
+// safe — previous entries are preserved and subsequent Appends extend the chain.
 func NewLog(path string) *Log {
 	return &Log{path: path}
 }
 
+// Append signs and appends e to the log. Callers set e.Event and optionally
+// e.Domain; all Foundation fields are computed and overwritten:
+//
+//   - Seq is set to the next sequence number (existing entries + 1).
+//   - PrevHash is "sha256:<hex>" of the last raw on-disk line, or "genesis"
+//     for the first entry.
+//   - ActorDID is set to did.
+//   - Timestamp is set to the current UTC time in RFC3339.
+//   - Signature is the base64-encoded Ed25519 signature of the canonical JSON
+//     of the entry with Signature = "".
+//
+// The entry is written as a single newline-terminated JSON line and fsynced
+// before Append returns. On any error the log should be considered potentially
+// corrupt and further appends must not be attempted.
+//
+// did must be a valid did:key DID with an Ed25519 public key; this is the key
+// Verify will use to check the signature later.
 func (l *Log) Append(e Entry, did string, s Signer) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -133,6 +169,8 @@ func (l *Log) Append(e Entry, did string, s Signer) error {
 	return nil
 }
 
+// Entries returns all entries in append order. Domain fields are decoded as
+// DomainEntry (map[string]any). Returns nil, nil if the log file does not exist.
 func (l *Log) Entries() ([]Entry, error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -152,6 +190,20 @@ func (l *Log) Entries() ([]Entry, error) {
 	return entries, nil
 }
 
+// Verify validates the full cryptographic integrity of the log. For each entry:
+//
+//  1. Seq must be contiguous — gaps or duplicates are rejected.
+//  2. PrevHash must equal "sha256:<hex>" of the previous raw on-disk line.
+//     The first entry must have PrevHash == "genesis".
+//  3. ActorDID must be a did:key DID with an Ed25519 public key.
+//  4. The Ed25519 signature must verify against the canonical JSON of the
+//     entry with Signature set to "".
+//
+// Returns nil if the log is intact. On failure the error identifies the first
+// bad entry by sequence number and describes the specific check that failed.
+//
+// Verify checks only a single log file. To validate a rotation chain spanning
+// multiple files, use VerifyChain.
 func (l *Log) Verify() error {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -205,6 +257,14 @@ func jsonMarshalForSign(v any) ([]byte, error) {
 	return MarshalForSign(v)
 }
 
+// MarshalForSign serializes v to compact JSON without HTML escaping and
+// without a trailing newline. This is the canonical form used for both signing
+// and writing entries to disk — the two byte sequences are identical, so the
+// raw on-disk line can be fed directly to the verifier without re-marshaling.
+//
+// Exported to allow external tooling (re-verification scripts, log converters)
+// to produce the same byte sequence that Append writes, without having to
+// reimplement the encoding rules.
 func MarshalForSign(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -245,12 +305,15 @@ func (l *Log) readRawLines() ([][]byte, error) {
 	return lines, scanner.Err()
 }
 
-// Path returns the file path of the log.
+// Path returns the file system path this log was opened with.
 func (l *Log) Path() string {
 	return l.path
 }
 
-// Fingerprint returns the SHA-256 hash of the entire log file.
+// Fingerprint returns "sha256:<hex>" of the entire log file's raw bytes.
+// This hash is recorded in terminus and genesis entries during Rotate and
+// verified by VerifyChain to confirm the sealed log was not modified after
+// rotation. Reading an empty or non-existent log file returns an error.
 func (l *Log) Fingerprint() (string, error) {
 	data, err := os.ReadFile(l.path)
 	if err != nil {
@@ -260,7 +323,9 @@ func (l *Log) Fingerprint() (string, error) {
 	return fmt.Sprintf("sha256:%x", hash), nil
 }
 
-// IsTerminus returns true if the last entry is a terminus entry.
+// IsTerminus reports whether this log has been sealed by Rotate — that is,
+// its last entry carries EventLogTerminus. A sealed log must not have further
+// entries appended; use the Log returned by Rotate instead.
 func (l *Log) IsTerminus() bool {
 	entries, err := l.Entries()
 	if err != nil || len(entries) == 0 {
@@ -269,7 +334,9 @@ func (l *Log) IsTerminus() bool {
 	return entries[len(entries)-1].Event == EventLogTerminus
 }
 
-// IsGenesis returns true if the first entry is a genesis entry.
+// IsGenesis reports whether this log was created by a rotation — that is,
+// its first entry carries EventLogGenesis. The initial log in a chain will
+// not have a genesis entry; every subsequent log will.
 func (l *Log) IsGenesis() bool {
 	entries, err := l.Entries()
 	if err != nil || len(entries) == 0 {
@@ -278,10 +345,23 @@ func (l *Log) IsGenesis() bool {
 	return entries[0].Event == EventLogGenesis
 }
 
-// Rotate performs atomic log rotation.
-// It writes a terminus entry to the current log, then creates a new log
-// at the NEXT sequence number with a genesis entry.
-// Returns the new Log instance (next generation).
+// Rotate seals the current log and opens a new one, establishing a
+// cryptographically verifiable link between them. It:
+//
+//  1. Computes a fingerprint (SHA-256) of the current log file content.
+//  2. Writes a terminus entry to the current log containing the fingerprint,
+//     the rotation reason, and a forward reference (Foundation.LogRef) to the
+//     new log path.
+//  3. Creates the new log at the next sequence path (via DefaultRotatePath)
+//     and writes a genesis entry referencing the old log and its fingerprint.
+//
+// The write lock is held only during terminus append, then released before
+// creating the new log. After Rotate returns, the caller must switch to the
+// returned Log for further appends; writing to the original Log after Rotate
+// corrupts the chain.
+//
+// VerifyChain validates the fingerprint linkage across the full rotation chain.
+// reason is stored in the domain fields of both terminus and genesis entries.
 func (l *Log) Rotate(reason RotationReason, did string, s Signer) (*Log, error) {
 	l.mu.Lock()
 
@@ -359,16 +439,25 @@ func (l *Log) Rotate(reason RotationReason, did string, s Signer) (*Log, error) 
 		return nil, fmt.Errorf("open log for terminus: %w", err)
 	}
 	if _, err := fmt.Fprintf(f, "%s\n", line); err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			l.mu.Unlock()
+			return nil, fmt.Errorf("write terminus: %w; close: %v", err, closeErr)
+		}
 		l.mu.Unlock()
 		return nil, fmt.Errorf("write terminus: %w", err)
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			l.mu.Unlock()
+			return nil, fmt.Errorf("sync terminus: %w; close: %v", err, closeErr)
+		}
 		l.mu.Unlock()
 		return nil, fmt.Errorf("sync terminus: %w", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		l.mu.Unlock()
+		return nil, fmt.Errorf("close terminus log: %w", err)
+	}
 	l.mu.Unlock()
 
 	// Create NEW log at next sequence with genesis entry
@@ -396,9 +485,22 @@ func (l *Log) Rotate(reason RotationReason, did string, s Signer) (*Log, error) 
 	return newLog, nil
 }
 
-// VerifyChain validates the cross-log rotation integrity.
-// All logs use the naming pattern: baseName.NNN.jsonl (e.g., audit-log.000.jsonl)
-// Logs are ordered by generation number and verified in sequence.
+// VerifyChain validates the rotation chain across all log files in logDir
+// whose names match the pattern baseName.NNN.jsonl (e.g. "audit-log.000.jsonl").
+// At least two log files must exist.
+//
+// For each consecutive pair (old → new), VerifyChain:
+//
+//  1. Runs Verify on each log individually.
+//  2. Confirms the last entry of the old log is EventLogTerminus and the first
+//     entry of the new log is EventLogGenesis.
+//  3. Recomputes the SHA-256 of the old log file without the terminus line and
+//     checks it against the fingerprint stored in both terminus and genesis entries.
+//  4. Checks that Foundation.LogRef in the terminus points to the new log and
+//     Foundation.LogRef in the genesis points to the old log.
+//
+// Returns nil if every log in the chain is internally valid and properly linked
+// to its neighbors.
 func VerifyChain(logDir string, baseName string) error {
 	// Discover all logs (000, 001, 002, etc.)
 	pattern := filepath.Join(logDir, baseName+".*.jsonl")

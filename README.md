@@ -4,6 +4,8 @@
 
 # sealchain
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/parallelhours/sealchain.svg)](https://pkg.go.dev/github.com/parallelhours/sealchain)
+
 sealchain is a Go library for append-only, tamper-evident audit logs backed by SHA-256 hash chains and Ed25519 signatures.
 
 ## Why sealchain
