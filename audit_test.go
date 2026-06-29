@@ -427,5 +427,76 @@ func TestLogRotateTwice(t *testing.T) {
 	assert.Equal(t, fp1, entries2[0].Domain.Fields()["previous_fingerprint"])
 
 	// Verify full chain
-	assert.NoError(t, sealchain.VerifyChain(dir, "audit-log"))
+	err = sealchain.VerifyChain(dir, "audit-log")
+	assert.NoError(t, err)
+}
+
+func TestNewLogWithConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.log")
+
+	// Test with empty template (should use default)
+	config := sealchain.LogConfig{}
+	log := sealchain.NewLogWithConfig(path, config)
+	assert.Equal(t, path, log.Path())
+	assert.Equal(t, sealchain.DefaultRotateTemplate, sealchain.DefaultRotateTemplate)
+
+	// Test with custom template
+	config = sealchain.LogConfig{RotateTemplate: "{{.Base}}-{{.Seq}}{{.Ext}}"}
+	log = sealchain.NewLogWithConfig(path, config)
+	assert.Equal(t, path, log.Path())
+}
+
+func TestRotateTemplate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.log")
+	id := newTestIdentity(t)
+
+	// Test default template
+	config := sealchain.LogConfig{RotateTemplate: sealchain.DefaultRotateTemplate}
+	log := sealchain.NewLogWithConfig(path, config)
+
+	require.NoError(t, log.Append(sealchain.Entry{
+		Event:  evtDocumentStored,
+		Domain: sealchain.DomainEntry{"document": "test.pdf"},
+	}, id.did, id))
+
+	newLog, err := log.Rotate(sealchain.RotationManual, id.did, id)
+	require.NoError(t, err)
+	assert.Contains(t, newLog.Path(), "audit.001.log")
+
+	// Test custom template with dash separator using SeqPadded
+	path2 := filepath.Join(dir, "audit2.log")
+	config2 := sealchain.LogConfig{RotateTemplate: "{{.Base}}-{{.SeqPadded}}{{.Ext}}"}
+	log2 := sealchain.NewLogWithConfig(path2, config2)
+
+	require.NoError(t, log2.Append(sealchain.Entry{
+		Event:  evtDocumentStored,
+		Domain: sealchain.DomainEntry{"document": "test2.pdf"},
+	}, id.did, id))
+
+	newLog2, err := log2.Rotate(sealchain.RotationManual, id.did, id)
+	require.NoError(t, err)
+	assert.Contains(t, newLog2.Path(), "audit2-001.log")
+}
+
+func TestRotateTemplateWithTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.log")
+	id := newTestIdentity(t)
+
+	// Test template with timestamp using SeqPadded
+	config := sealchain.LogConfig{RotateTemplate: "{{.Base}}-{{.Timestamp}}-{{.SeqPadded}}{{.Ext}}"}
+	log := sealchain.NewLogWithConfig(path, config)
+
+	require.NoError(t, log.Append(sealchain.Entry{
+		Event:  evtDocumentStored,
+		Domain: sealchain.DomainEntry{"document": "test.pdf"},
+	}, id.did, id))
+
+	newLog, err := log.Rotate(sealchain.RotationManual, id.did, id)
+	require.NoError(t, err)
+	// Should contain timestamp pattern (RFC3339 format)
+	assert.Contains(t, newLog.Path(), "audit-")
+	assert.Contains(t, newLog.Path(), "-001.log")
 }

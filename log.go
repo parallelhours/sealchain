@@ -17,8 +17,26 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 )
+
+// LogConfig holds configuration options for a Log.
+type LogConfig struct {
+	// RotateTemplate is the Go template string used to generate rotated log file names.
+	// Available template variables:
+	//   {{.Base}} - original filename without extension
+	//   {{.Ext}} - file extension (including the dot, e.g., ".jsonl")
+	//   {{.Seq}} - sequence number (not padded)
+	//   {{.SeqPadded}} - zero-padded sequence number (3 digits)
+	//   {{.Timestamp}} - rotation timestamp in RFC3339 format
+	//   {{.PrevPath}} - previous log path
+	// Default: "{{.Base}}.{{.SeqPadded}}{{.Ext}}"
+	RotateTemplate string
+}
+
+// DefaultRotateTemplate is the default template that preserves current behavior.
+const DefaultRotateTemplate = "{{.Base}}.{{.SeqPadded}}{{.Ext}}"
 
 // Log is a file-backed append-only audit log. It is safe for concurrent use:
 // Append holds an exclusive write lock and Entries/Verify hold a shared read lock.
@@ -27,8 +45,9 @@ import (
 // are safe as long as all access goes through this type's methods. Direct
 // modification of the underlying file bypasses locking and will corrupt the chain.
 type Log struct {
-	path string
-	mu   sync.RWMutex
+	path   string
+	config LogConfig
+	mu     sync.RWMutex
 }
 
 // DefaultRotatePath returns the next log file path in the rotation sequence.
@@ -95,11 +114,128 @@ func defaultRotatePath(currentPath string) (string, error) {
 	return DefaultRotatePath(currentPath)
 }
 
-// NewLog returns a Log handle for path. The file is created on the first
-// Append if it does not yet exist. Calling NewLog on an existing log file is
-// safe — previous entries are preserved and subsequent Appends extend the chain.
+// rotateTemplateData holds the data available to the rotation template.
+type rotateTemplateData struct {
+	Base      string
+	Ext       string
+	Seq       int
+	SeqPadded string // Zero-padded sequence number (3 digits by default)
+	Timestamp string
+	PrevPath  string
+}
+
+// applyRotateTemplate applies the configured template to generate a rotated log path.
+func (l *Log) applyRotateTemplate(seq int, prevPath string) (string, error) {
+	dir := filepath.Dir(l.path)
+	base := filepath.Base(l.path)
+	ext := filepath.Ext(base)
+	baseNoExt := base[:len(base)-len(ext)]
+
+	// Strip existing sequence number from base name if present
+	// e.g., "audit-log.000" -> "audit-log"
+	baseName := baseNoExt
+	if idx := strings.LastIndex(baseNoExt, "."); idx >= 0 {
+		seqPart := baseNoExt[idx+1:]
+		if _, err := fmt.Sscanf(seqPart, "%d", new(int)); err == nil {
+			baseName = baseNoExt[:idx]
+		}
+	}
+
+	tmpl, err := template.New("rotate").Parse(l.config.RotateTemplate)
+	if err != nil {
+		return "", fmt.Errorf("parse rotate template: %w", err)
+	}
+
+	data := rotateTemplateData{
+		Base:      baseName,
+		Ext:       ext,
+		Seq:       seq,
+		SeqPadded: fmt.Sprintf("%03d", seq),
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		PrevPath:  prevPath,
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("execute rotate template: %w", err)
+	}
+
+	filename := buf.String()
+	return filepath.Join(dir, filename), nil
+}
+
+// nextRotateSeq determines the next sequence number for rotation by scanning
+// the directory for existing files that match the base name pattern.
+func (l *Log) nextRotateSeq() (int, error) {
+	dir := filepath.Dir(l.path)
+	base := filepath.Base(l.path)
+	ext := filepath.Ext(base)
+	baseNoExt := base[:len(base)-len(ext)]
+
+	// Strip existing sequence number from base name if present
+	// e.g., "audit-log.000" -> "audit-log"
+	baseName := baseNoExt
+	if idx := strings.LastIndex(baseNoExt, "."); idx >= 0 {
+		seqPart := baseNoExt[idx+1:]
+		if _, err := fmt.Sscanf(seqPart, "%d", new(int)); err == nil {
+			baseName = baseNoExt[:idx]
+		}
+	}
+
+	// For the default template, scan for files matching baseName.*.ext
+	// For custom templates, we'll use a simple heuristic: scan for files starting with baseName
+	pattern := filepath.Join(dir, baseName+"*"+ext)
+	existing, err := filepath.Glob(pattern)
+	if err != nil {
+		return 0, fmt.Errorf("glob failed: %w", err)
+	}
+
+	maxSeq := 0
+	for _, f := range existing {
+		fbase := filepath.Base(f)
+		// Try to extract sequence number from the filename
+		// This is a simple heuristic that works for the default template
+		// For custom templates, users may need to manage sequence numbers differently
+		// Look for pattern: baseName.NNN.ext or baseName.N.ext
+		if strings.HasPrefix(fbase, baseName) && strings.HasSuffix(fbase, ext) {
+			between := fbase[len(baseName) : len(fbase)-len(ext)]
+			// Remove leading dot if present
+			between = strings.TrimPrefix(between, ".")
+			var seq int
+			if _, err := fmt.Sscanf(between, "%d", &seq); err == nil {
+				if seq > maxSeq {
+					maxSeq = seq
+				}
+			}
+		}
+	}
+
+	return maxSeq + 1, nil
+}
+
+// NewLog returns a Log handle for path with default configuration.
+// The file is created on the first Append if it does not yet exist.
+// Calling NewLog on an existing log file is safe — previous entries are
+// preserved and subsequent Appends extend the chain.
 func NewLog(path string) *Log {
-	return &Log{path: path}
+	return &Log{
+		path:   path,
+		config: LogConfig{RotateTemplate: DefaultRotateTemplate},
+	}
+}
+
+// NewLogWithConfig returns a Log handle for path with custom configuration.
+// The file is created on the first Append if it does not yet exist.
+// Calling NewLogWithConfig on an existing log file is safe — previous entries
+// are preserved and subsequent Appends extend the chain.
+func NewLogWithConfig(path string, config LogConfig) *Log {
+	if config.RotateTemplate == "" {
+		config.RotateTemplate = DefaultRotateTemplate
+	}
+	return &Log{
+		path:   path,
+		config: config,
+	}
 }
 
 // Append signs and appends e to the log. Callers set e.Event and optionally
@@ -352,7 +488,7 @@ func (l *Log) IsGenesis() bool {
 //  2. Writes a terminus entry to the current log containing the fingerprint,
 //     the rotation reason, and a forward reference (Foundation.LogRef) to the
 //     new log path.
-//  3. Creates the new log at the next sequence path (via DefaultRotatePath)
+//  3. Creates the new log using the configured rotation template
 //     and writes a genesis entry referencing the old log and its fingerprint.
 //
 // The write lock is held only during terminus append, then released before
@@ -372,8 +508,15 @@ func (l *Log) Rotate(reason RotationReason, did string, s Signer) (*Log, error) 
 		return nil, fmt.Errorf("fingerprint failed: %w", err)
 	}
 
-	// Generate NEW log path (next sequence)
-	newPath, err := defaultRotatePath(l.path)
+	// Determine next sequence number
+	nextSeq, err := l.nextRotateSeq()
+	if err != nil {
+		l.mu.Unlock()
+		return nil, fmt.Errorf("determine next sequence: %w", err)
+	}
+
+	// Generate NEW log path using the configured template
+	newPath, err := l.applyRotateTemplate(nextSeq, l.path)
 	if err != nil {
 		l.mu.Unlock()
 		return nil, fmt.Errorf("rotate path failed: %w", err)
@@ -460,8 +603,8 @@ func (l *Log) Rotate(reason RotationReason, did string, s Signer) (*Log, error) 
 	}
 	l.mu.Unlock()
 
-	// Create NEW log at next sequence with genesis entry
-	newLog := NewLog(newPath)
+	// Create NEW log at next sequence with genesis entry, preserving config
+	newLog := NewLogWithConfig(newPath, l.config)
 
 	genesis := Entry{
 		Event: EventLogGenesis,
