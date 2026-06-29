@@ -244,6 +244,8 @@ func (l *Log) Fingerprint() (string, error)
 
 ## Log Naming Convention
 
+### Default Naming
+
 ALL logs use zero-padded sequence numbers (no "current/active" special case):
 
 ```
@@ -260,6 +262,77 @@ audit-log.003.jsonl      ← fourth log
 4. Terminus in old log points forward to `audit-log.003.jsonl`
 
 This ensures every log file has a unique name and the chain links properly in one direction.
+
+### Configurable Naming via Template
+
+The default naming convention can be customized using a Go template string. This allows you to define your own rotation naming patterns that include timestamps, custom separators, or other metadata.
+
+#### Using Custom Templates
+
+Create a log with custom configuration:
+
+```go
+config := sealchain.LogConfig{
+    RotateTemplate: "{{.Base}}-{{.Seq}}{{.Ext}}",
+}
+log := sealchain.NewLogWithConfig("/var/log/audit.log", config)
+
+// Rotate will now use: audit-1.log, audit-2.log, etc.
+newLog, err := log.Rotate(sealchain.RotationManual, actorDID, signer)
+```
+
+#### Template Variables
+
+The following variables are available in the rotation template:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `{{.Base}}` | Original filename without extension | `audit-log` |
+| `{{.Ext}}` | File extension including the dot | `.jsonl` |
+| `{{.Seq}}` | Sequence number (not padded) | `1`, `2`, `3` |
+| `{{.SeqPadded}}` | Zero-padded sequence number (3 digits) | `001`, `002`, `003` |
+| `{{.Timestamp}}` | Rotation timestamp in RFC3339 format | `2026-04-29T12:34:56Z` |
+| `{{.PrevPath}}` | Previous log path | `/var/log/audit-log.002.jsonl` |
+
+#### Template Examples
+
+**Default behavior (sequence-based):**
+```go
+RotateTemplate: "{{.Base}}.{{.SeqPadded}}{{.Ext}}"
+// Produces: audit-log.001.jsonl, audit-log.002.jsonl, ...
+```
+
+**Timestamp-based naming:**
+```go
+RotateTemplate: "{{.Base}}-{{.Timestamp}}-{{.SeqPadded}}{{.Ext}}"
+// Produces: audit-log-2026-04-29T12:34:56Z-001.jsonl, ...
+```
+
+**Custom separator:**
+```go
+RotateTemplate: "{{.Base}}_{{.SeqPadded}}{{.Ext}}"
+// Produces: audit-log_001.jsonl, audit-log_002.jsonl, ...
+```
+
+**Date-only prefix:**
+```go
+RotateTemplate: "{{.Base}}-{{.Timestamp | date \"2006-01-02\"}}-{{.SeqPadded}}{{.Ext}}"
+// Produces: audit-log-2026-04-29-001.jsonl, ...
+```
+
+#### Default Template
+
+The default template preserves the original behavior:
+
+```go
+const DefaultRotateTemplate = "{{.Base}}.{{.SeqPadded}}{{.Ext}}"
+```
+
+If you create a log with `NewLog()` (without configuration), this template is used automatically. If you use `NewLogWithConfig()` with an empty template, the default is also applied.
+
+#### Sequence Number Detection
+
+The library automatically determines the next sequence number by scanning the directory for existing files that match the base name pattern. For custom templates that don't use sequence numbers in a predictable way, you may need to manage sequence numbers manually or ensure your template includes `{{.Seq}}` in a way that the detection heuristic can parse.
 
 ```go
 func defaultRotatePath(currentPath string) (string, error) {
